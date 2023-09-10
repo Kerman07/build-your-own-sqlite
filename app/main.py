@@ -1,3 +1,4 @@
+import struct
 import sys
 
 from dataclasses import dataclass
@@ -9,8 +10,11 @@ command = sys.argv[2]
 
 if command == ".dbinfo":
     with open(database_file_path, "rb") as database_file:
-        database_file.seek(16)  # Skip the first 16 bytes of the header
+        database_file.seek(16)
         page_size = int.from_bytes(database_file.read(2), byteorder="big")
         print(f"database page size: {page_size}")
+        database_file.seek(103)
+        number_of_tables = int.from_bytes(database_file.read(2), byteorder="big")
+        print(f"number of tables: {number_of_tables}")
 else:
     print(f"Invalid command: {command}")
