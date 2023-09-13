@@ -91,16 +91,16 @@ def main():
         db_header = db.header
         database_file.seek(100)
         first_page_btree_header = BTreePageHeader(database_file)
+        database_file.seek(108)
+        locations = [
+            int.from_bytes(database_file.read(2), byteorder="big")
+            for _ in range(first_page_btree_header.number_of_cells)
+        ]
+        schema = SqliteSchema(database_file, locations)
         if command == ".dbinfo":
             print(f"database page size: {db_header.page_size}")
             print(f"number of tables: {first_page_btree_header.number_of_cells}")
         elif command == ".tables":
-            database_file.seek(108)
-            locations = [
-                int.from_bytes(database_file.read(2), byteorder="big")
-                for _ in range(first_page_btree_header.number_of_cells)
-            ]
-            schema = SqliteSchema(database_file, locations)
             print(
                 " ".join(
                     object.name
@@ -108,6 +108,12 @@ def main():
                     if object.typ == "table"
                 )
             )
+        elif command.startswith("select count(*)"):
+            table = command.split(" ")[-1]
+            table_page = schema.objects[table].rootpage
+            database_file.seek((table_page - 1) * db_header.page_size)
+            btree_page_header = BTreePageHeader(database_file)
+            print(btree_page_header.number_of_cells)
         else:
             print(f"Invalid command: {command}")
 
