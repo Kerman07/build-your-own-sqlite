@@ -1,9 +1,13 @@
-import struct
+import re
 import sys
 
-from collections import defaultdict
-from dataclasses import dataclass
-from typing import List
+from typing import List, Union
+
+
+def read_record_value_from_file(file, size_type):
+    if size_type[1] == "int":
+        return int.from_bytes(file.read(size_type[0]), byteorder="big")
+    return file.read(size_type[0]).decode("utf-8")
 
 
 class Database:
@@ -36,12 +40,17 @@ class BTreePageHeader:
 
 
 class SchemaRow:
-    def __init__(self, file: bytes, sizes: List[int]) -> None:
-        self.typ = file.read(sizes[0]).decode("utf-8")
-        self.name = file.read(sizes[1]).decode("utf-8")
-        self.table_name = file.read(sizes[2]).decode("utf-8")
-        self.rootpage = int.from_bytes(file.read(sizes[3]), byteorder="big")
-        self.sql = file.read(sizes[4]).decode("utf-8")
+    def __init__(self, file: bytes, sizes: List[Union[int, str]]) -> None:
+        self.typ = read_record_value_from_file(file, sizes[0])
+        self.name = read_record_value_from_file(file, sizes[1])
+        self.table_name = read_record_value_from_file(file, sizes[2])
+        self.rootpage = read_record_value_from_file(file, sizes[3])
+        self.sql = read_record_value_from_file(file, sizes[4])
+        columns = self.sql.split("(")[1][:-1]
+        columns = [col.split()[0] for col in columns.split(",")]
+        self.columns = {}
+        for i, val in enumerate(columns):
+            self.columns[val] = i
 
 
 class SqliteSchema:
@@ -65,10 +74,10 @@ class SerialType:
     def get_size(size: int) -> int:
         mapping = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 6, 6: 8, 7: 8, 8: 0, 9: 0}
         if size in mapping:
-            return mapping[size]
+            return (mapping[size], "int")
         if size & 1:
-            return (size - 13) // 2
-        return (size - 12) // 2
+            return ((size - 13) // 2, "text")
+        return ((size - 12) // 2, "blob")
 
 
 class Varint:
@@ -80,6 +89,24 @@ class Varint:
             var = int.from_bytes(file.read(1), byteorder="big")
             ans = (ans << 7) + (var & 0x7F)
         return ans
+
+
+class Record:
+    def __init__(self, file) -> None:
+        self.init_record(file)
+
+    def init_record(self, file):
+        self.payload_size = Varint.parse(file)
+        self.row_id = Varint.parse(file)
+        self.header_size = Varint.parse(file)
+        file.read(1)
+        self.column_sizes = [
+            SerialType.get_size(Varint.parse(file)) for _ in range(self.header_size - 2)
+        ]
+        self.values = [self.row_id] + [
+            read_record_value_from_file(file, size_type)
+            for size_type in self.column_sizes
+        ]
 
 
 def main():
@@ -114,6 +141,24 @@ def main():
             database_file.seek((table_page - 1) * db_header.page_size)
             btree_page_header = BTreePageHeader(database_file)
             print(btree_page_header.number_of_cells)
+        elif command.startswith("select "):
+            pattern = r"select\s*([\w\s,]*)\s*from\s*(\w+)"
+            matched = re.search(pattern, command)
+            slt_columns, slt_table = matched.group(1).strip(), matched.group(2)
+            table_page = schema.objects[slt_table].rootpage
+            page_offset = (table_page - 1) * db_header.page_size
+            database_file.seek(page_offset)
+            btree_page_header = BTreePageHeader(database_file)
+            offsets = [
+                int.from_bytes(database_file.read(2), byteorder="big")
+                for _ in range(btree_page_header.number_of_cells)
+            ]
+            records = []
+            for offset in offsets:
+                database_file.seek(offset + page_offset)
+                records.append(Record(database_file))
+            for record in records:
+                print(record.values[schema.objects[slt_table].columns[slt_columns]])
         else:
             print(f"Invalid command: {command}")
 
