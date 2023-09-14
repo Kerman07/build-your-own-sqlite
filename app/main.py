@@ -4,7 +4,9 @@ import sys
 from typing import List, Union
 
 
-def read_record_value_from_file(file, size_type):
+def read_record_value_from_file(
+    file: bytes, size_type: List[Union[int, str]]
+) -> Union[int, str]:
     if size_type[1] == "int":
         return int.from_bytes(file.read(size_type[0]), byteorder="big")
     return file.read(size_type[0]).decode("utf-8")
@@ -29,7 +31,7 @@ class BTreePageHeader:
     def __init__(self, file: bytes) -> None:
         self.init_header(file)
 
-    def init_header(self, file: bytes):
+    def init_header(self, file: bytes) -> None:
         self.type = file.read(1)
         self.free_block = int.from_bytes(file.read(2), byteorder="big")
         self.number_of_cells = int.from_bytes(file.read(2), byteorder="big")
@@ -58,7 +60,7 @@ class SqliteSchema:
         self.objects = {}
         self.get_schema(file, locations)
 
-    def get_schema(self, file: bytes, locations: List[int]):
+    def get_schema(self, file: bytes, locations: List[int]) -> None:
         for location in locations:
             file.seek(location)
             self.payload_size = Varint.parse(file)
@@ -67,6 +69,9 @@ class SqliteSchema:
             sizes = [SerialType.get_size(Varint.parse(file)) for _ in range(5)]
             obj = SchemaRow(file, sizes)
             self.objects[obj.name] = obj
+
+    def get_ind_of_column(self, table, column) -> int:
+        return self.objects[table].columns[column.strip()]
 
 
 class SerialType:
@@ -92,10 +97,10 @@ class Varint:
 
 
 class Record:
-    def __init__(self, file) -> None:
+    def __init__(self, file: bytes) -> None:
         self.init_record(file)
 
-    def init_record(self, file):
+    def init_record(self, file: bytes) -> None:
         self.payload_size = Varint.parse(file)
         self.row_id = Varint.parse(file)
         self.header_size = Varint.parse(file)
@@ -144,7 +149,7 @@ def main():
         elif command.startswith("select "):
             pattern = r"select\s*([\w\s,]*)\s*from\s*(\w+)"
             matched = re.search(pattern, command)
-            slt_columns, slt_table = matched.group(1).strip(), matched.group(2)
+            slt_columns, slt_table = matched.group(1).split(", "), matched.group(2)
             table_page = schema.objects[slt_table].rootpage
             page_offset = (table_page - 1) * db_header.page_size
             database_file.seek(page_offset)
@@ -158,7 +163,12 @@ def main():
                 database_file.seek(offset + page_offset)
                 records.append(Record(database_file))
             for record in records:
-                print(record.values[schema.objects[slt_table].columns[slt_columns]])
+                print(
+                    "|".join(
+                        record.values[schema.get_ind_of_column(slt_table, column)]
+                        for column in slt_columns
+                    )
+                )
         else:
             print(f"Invalid command: {command}")
 
