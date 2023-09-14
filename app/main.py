@@ -162,6 +162,14 @@ def main():
             for offset in offsets:
                 database_file.seek(offset + page_offset)
                 records.append(Record(database_file))
+            if "where" in command:
+                _, condition = command.replace("'", "").split("where ", 1)
+                column, operator, value = condition.split(" ")
+                index = schema.get_ind_of_column(slt_table, column)
+                if operator == "=":
+                    records = [rec for rec in records if rec.values[index] == value]
+                elif operator == "!=":
+                    records = [rec for rec in records if rec.values[index] != value]
             for record in records:
                 print(
                     "|".join(
