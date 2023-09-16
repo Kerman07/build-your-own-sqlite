@@ -37,7 +37,7 @@ class BTreePageHeader:
         self.number_of_cells = int.from_bytes(file.read(2), byteorder="big")
         self.start_cell_content = int.from_bytes(file.read(2), byteorder="big")
         self.fragmented_bytes = int.from_bytes(file.read(1), byteorder="big")
-        if self.type in [b"\X02", b"\X05"]:
+        if self.type in [b"\x02", b"\x05"]:
             self.right_most_pointer = int.from_bytes(file.read(4), byteorder="big")
 
 
@@ -114,9 +114,35 @@ class Record:
         ]
 
 
+class Table:
+    @staticmethod
+    def get_records(file: bytes, page_offset: int, page_size: int) -> List[Record]:
+        total_offset = page_offset * page_size
+        file.seek(total_offset)
+        btree_page_header = BTreePageHeader(file)
+        records = []
+        cell_pointers = [
+            int.from_bytes(file.read(2), byteorder="big")
+            for _ in range(btree_page_header.number_of_cells)
+        ]
+        for cell in cell_pointers:
+            file.seek(cell + total_offset)
+            if btree_page_header.type == b"\x05":
+                tab_page = int.from_bytes(file.read(4), byteorder="big")
+                records += Table.get_records(file, tab_page - 1, page_size)
+            elif btree_page_header.type == b"\x0d":
+                records.append(Record(file))
+        return records
+
+
 def main():
     database_file_path = sys.argv[1]
     command = sys.argv[2]
+    command = (
+        command.replace("SELECT", "select")
+        .replace("FROM", "from")
+        .replace("WHERE", "where")
+    )
 
     with open(database_file_path, "rb") as database_file:
         db = Database(database_file)
@@ -135,9 +161,7 @@ def main():
         elif command == ".tables":
             print(
                 " ".join(
-                    object.name
-                    for object in schema.objects.values()
-                    if object.typ == "table"
+                    obj.name for obj in schema.objects.values() if obj.typ == "table"
                 )
             )
         elif command.startswith("select count(*)"):
@@ -151,20 +175,13 @@ def main():
             matched = re.search(pattern, command)
             slt_columns, slt_table = matched.group(1).split(", "), matched.group(2)
             table_page = schema.objects[slt_table].rootpage
-            page_offset = (table_page - 1) * db_header.page_size
-            database_file.seek(page_offset)
-            btree_page_header = BTreePageHeader(database_file)
-            offsets = [
-                int.from_bytes(database_file.read(2), byteorder="big")
-                for _ in range(btree_page_header.number_of_cells)
-            ]
-            records = []
-            for offset in offsets:
-                database_file.seek(offset + page_offset)
-                records.append(Record(database_file))
+            records = Table.get_records(
+                database_file, table_page - 1, db_header.page_size
+            )
             if "where" in command:
                 _, condition = command.replace("'", "").split("where ", 1)
-                column, operator, value = condition.split(" ")
+                column, operator, *value = condition.split(" ")
+                value = " ".join(value)
                 index = schema.get_ind_of_column(slt_table, column)
                 if operator == "=":
                     records = [rec for rec in records if rec.values[index] == value]
@@ -173,7 +190,7 @@ def main():
             for record in records:
                 print(
                     "|".join(
-                        record.values[schema.get_ind_of_column(slt_table, column)]
+                        str(record.values[schema.get_ind_of_column(slt_table, column)])
                         for column in slt_columns
                     )
                 )
